@@ -13,14 +13,19 @@ jobs:
         run: |
           sudo apt update
 
-      - name: Install Desktop + XRDP
+      - name: Install XFCE + XRDP
         run: |
-          sudo apt install -y xfce4 xfce4-goodies xrdp wget curl
+          sudo DEBIAN_FRONTEND=noninteractive apt install -y \
+          xfce4 \
+          xfce4-goodies \
+          xorg \
+          dbus-x11 \
+          x11-xserver-utils \
+          xrdp \
+          wget \
+          curl
 
-          echo "xfce4-session" > ~/.xsession
-
-          sudo systemctl enable xrdp
-          sudo systemctl restart xrdp
+          sudo adduser xrdp ssl-cert
 
       - name: Create User
         run: |
@@ -28,7 +33,22 @@ jobs:
           echo "rdp:P@ssw0rd123!" | sudo chpasswd
           sudo usermod -aG sudo rdp
 
-      - name: Open RDP Port
+      - name: Configure XFCE
+        run: |
+          echo "startxfce4" > /home/rdp/.xsession
+          sudo chown rdp:rdp /home/rdp/.xsession
+
+          sudo sed -i 's/^test -x/#test -x/g' /etc/xrdp/startwm.sh
+          sudo sed -i 's/^exec/#exec/g' /etc/xrdp/startwm.sh
+
+          echo "startxfce4" | sudo tee -a /etc/xrdp/startwm.sh
+
+      - name: Enable XRDP
+        run: |
+          sudo systemctl enable xrdp
+          sudo systemctl restart xrdp
+
+      - name: Open Firewall
         run: |
           sudo ufw allow 3389/tcp || true
 
@@ -43,13 +63,13 @@ jobs:
           IP=$(tailscale ip -4)
           echo "TS_IP=$IP" >> $GITHUB_ENV
 
-      - name: Show Connection Info
+      - name: Show Login Info
         run: |
-          echo "===================="
+          echo "========================="
           echo "IP: $TS_IP"
-          echo "User: rdp"
-          echo "Pass: P@ssw0rd123!"
-          echo "===================="
+          echo "USER: rdp"
+          echo "PASS: P@ssw0rd123!"
+          echo "========================="
 
       - name: Keep Alive
         run: |
