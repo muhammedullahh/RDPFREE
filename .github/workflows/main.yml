@@ -11,7 +11,8 @@ jobs:
       - name: Update and Install RDP & Desktop
         run: |
           sudo apt-get update
-          sudo apt-get install -y xrdp xfce4 xfce4-goodies dbus-x11
+          # Kurulum sırasında çıkan gizli klavye/bölge sorularını atlamak için noninteractive kullanıyoruz
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xorgxrdp xfce4 xfce4-goodies dbus-x11
           sudo systemctl enable xrdp
 
       - name: Create RDP User and Configure Session
@@ -20,22 +21,16 @@ jobs:
           echo "rdpuser:P@ssw0rd123!" | sudo chpasswd
           sudo usermod -aG sudo rdpuser
           
-          # YETKİ HATASI ÇÖZÜMÜ: 'sudo tee' ile dosyaya yazma yetkisini zorluyoruz
-          echo "xfce4-session" | sudo tee /home/rdpuser/.xsession > /dev/null
-          sudo chown rdpuser:rdpuser /home/rdpuser/.xsession
-          sudo chmod +x /home/rdpuser/.xsession
-          
-          # CRASH ÇÖZÜMÜ: startwm.sh dosyasını ezip sıfırdan yazıyoruz
-          sudo cp /etc/xrdp/startwm.sh /etc/xrdp/startwm.sh.bak
+          # CRASH ÇÖZÜMÜ: Ortam değişkenlerini (XDG) elle atayıp, masaüstünü DBUS ile paketleyip açıyoruz.
           sudo bash -c 'cat > /etc/xrdp/startwm.sh <<EOF
           #!/bin/sh
-          if [ -r /etc/default/locale ]; then
-            . /etc/default/locale
-            export LANG LANGUAGE
-          fi
-          unset DBUS_SESSION_BUS_ADDRESS
-          unset XDG_RUNTIME_DIR
-          exec startxfce4
+          export XDG_SESSION_TYPE=x11
+          export XDG_CURRENT_DESKTOP=XFCE
+          export XDG_CONFIG_DIRS=/etc/xdg:/etc
+          export XDG_DATA_DIRS=/usr/share/xfce4:/usr/share:/usr/local/share
+          
+          # D-Bus servisini çalıştırarak XFCE masaüstünü başlat
+          exec dbus-run-session -- xfce4-session
           EOF'
           
           sudo chmod +x /etc/xrdp/startwm.sh
