@@ -11,54 +11,56 @@ jobs:
       - name: Update and Install RDP & Desktop
         run: |
           sudo apt-get update
+          # Gerekli tüm XFCE, XRDP, D-Bus ve Polkit paketlerini yükle
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
             xrdp xorgxrdp xfce4 xfce4-goodies xfce4-session xfce4-settings xfconf \
-            dbus-x11 x11-xserver-utils
-            
-          # X11 izinlerini yapılandır
+            dbus-x11 x11-xserver-utils polkitd
+          
+          # X11 ve SSL izinleri
           echo "allowed_users=anybody" | sudo tee /etc/X11/Xwrapper.config
           sudo adduser xrdp ssl-cert
+          
+          # XRDP servislerini başlat
+          sudo systemctl enable xrdp xrdp-sesman
+          sudo systemctl restart xrdp xrdp-sesman
 
-      - name: Create RDP User and Configure Session
+      - name: Create RDP User and Configure Environment
         run: |
+          # Kullanıcıyı oluştur
           sudo useradd -m -s /bin/bash rdpuser
           echo "rdpuser:P@ssw0rd123!" | sudo chpasswd
           sudo usermod -aG sudo,video,render,users rdpuser
           
-          # Kullanıcı oturumunu XFCE olarak ayarla
-          echo "startxfce4" | sudo tee /home/rdpuser/.xsession
-          sudo chown rdpuser:rdpuser /home/rdpuser/.xsession
+          # HATA ÇÖZÜMÜ: Gizli dizinlerin varlığını garanti et (chown hatasını kökten çözer)
+          sudo -u rdpuser mkdir -p /home/rdpuser/.cache /home/rdpuser/.config /home/rdpuser/.local/share
+          
+          # .xsession dosyası
+          echo "startxfce4" | sudo -u rdpuser tee /home/rdpuser/.xsession
           sudo chmod +x /home/rdpuser/.xsession
           
-          # HATA ÇÖZÜMÜ 1: XDG ortam değişkenlerini düzelt (xfconfd failsafe hatası için)
-          cat <<EOF | sudo tee /home/rdpuser/.xsessionrc
+          # .xsessionrc (Ortam değişkenleri - xfconfd failsafe hatası için şart)
+          cat <<EOF | sudo -u rdpuser tee /home/rdpuser/.xsessionrc
           export XDG_SESSION_TYPE=x11
           export XDG_CURRENT_DESKTOP=XFCE
           export XDG_CONFIG_DIRS=/etc/xdg:/etc
           export XDG_DATA_DIRS=/usr/share/xfce4:/usr/local/share:/usr/share
           export XDG_CACHE_HOME=/home/rdpuser/.cache
           EOF
-          sudo chown rdpuser:rdpuser /home/rdpuser/.xsessionrc
-          
-          # HATA ÇÖZÜMÜ 2: Bozuk önbellek ve kilit dosyalarını temizle
-          sudo rm -rf /home/rdpuser/.config/xfce4/xfconf/xfce-perchannel-xml/*
-          sudo rm -f /home/rdpuser/.cache/sessions/xfce4-session-*
-          sudo chown -R rdpuser:rdpuser /home/rdpuser/.config /home/rdpuser/.cache
 
-      - name: Fix Polkit and XRDP Startup Script
+      - name: Fix Polkit, XRDP Startup & Permissions
         run: |
-          # HATA ÇÖZÜMÜ 3: Polkit kuralları (Arka planda şifre sorup kilitlenmeyi önler)
+          # Polkit kuralı (Renk yöneticisi şifre sorma ekranını engeller, siyah ekranı önler)
           sudo mkdir -p /etc/polkit-1/localauthority/50-local.d/
           cat <<EOF | sudo tee /etc/polkit-1/localauthority/50-local.d/45-allow-colord.pkla
           [Allow Colord all Users]
           Identity=unix-user:*
-          Action=org.freedesktop.color-manager.create-device;org.freedesktop.color-manager.create-profile;org.freedesktop.color-manager.delete-device;org.freedesktop.color-manager.delete-profile;org.freedesktop.color-manager.modify-device;org.freedesktop.color-manager.modify-profile
+          Action=org.freedesktop.color-manager.*
           ResultAny=no
           ResultInactive=no
           ResultActive=yes
           EOF
 
-          # HATA ÇÖZÜMÜ 4: startwm.sh dosyasını sıfırla (Siyah ekran ve Dbus çözümü)
+          # startwm.sh (Siyah ekran ve xfconfd hatasının ilacı)
           cat <<EOF | sudo tee /etc/xrdp/startwm.sh
           #!/bin/sh
           if [ -r /etc/default/locale ]; then
@@ -66,38 +68,49 @@ jobs:
             export LANG LANGUAGE
           fi
           
-          # GitHub Runner'ın zehirli ortam değişkenlerini temizle
+          # GitHub runner'ın bozuk dbus değişkenlerini temizle
           unset DBUS_SESSION_BUS_ADDRESS
           unset XDG_RUNTIME_DIR
           
-          # Temiz bir DBus oturumu içinde XFCE'yi başlat (xfconfd için şart)
+          # Temiz bir dbus oturumuyla XFCE'yi başlat
           exec dbus-run-session -- startxfce4
           EOF
           sudo chmod +x /etc/xrdp/startwm.sh
-
-      - name: Start XRDP Services
-        run: |
-          sudo systemctl enable xrdp xrdp-sesman
+          
+          # Tüm ev dizini izinlerini en son güvenli şekilde ver (Artık hata vermeyecek)
+          sudo chown -R rdpuser:rdpuser /home/rdpuser/
+          
+          # XRDP'yi yeniden başlat
           sudo systemctl restart xrdp xrdp-sesman
-          sleep 5
-          sudo systemctl status xrdp --no-pager
 
-      - name: Install and Connect Tailscale
+      - name: Install and Connect Tailscale (Official Method)
         run: |
+          # Tailscale resmi kurulum scripti
           curl -fsSL https://tailscale.com/install.sh | sh
-          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }}
+          
+          # Tailscale daemon'ını systemd ile garantili şekilde başlat (CI ortamları için en stabil yöntem)
+          sudo systemctl enable --now tailscaled
+          
+          # Tailscale ağına bağlan
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --accept-routes
+          
+          # IP'yi al ve çevre değişkenine yaz
           TS_IP=$(tailscale ip -4)
           echo "TS_IP=$TS_IP" >> $GITHUB_ENV
+          echo "Tailscale IP: $TS_IP"
 
       - name: Keep Alive & Connection Info
         run: |
-          echo "==================== RDP BAĞLANTI BİLGİLERİ ===================="
-          echo "IP Adresi  : $TS_IP"
-          echo "Port       : 3389"
-          echo "Kullanıcı  : rdpuser"
-          echo "Şifre      : P@ssw0rd123!"
-          echo "================================================================"
-          echo "NOT: RDP istemcinizde Renk Derinliğini (Color Depth) 24-bit veya 16-bit yapın."
+          echo "=================================================="
+          echo " RDP BAĞLANTI BİLGİLERİ (Tailscale Üzerinden)"
+          echo "=================================================="
+          echo " IP Adresi  : $TS_IP"
+          echo " Port       : 3389"
+          echo " Kullanıcı  : rdpuser"
+          echo " Şifre      : P@ssw0rd123!"
+          echo "=================================================="
+          echo " NOT: Windows RDP'de Renk Derinliğini 24-bit yapın."
+          echo "=================================================="
           
-          # GitHub 6 saat sınırına kadar sistemi açık tut
-          while true; do sleep 300; done
+          # 6 saat boyunca açık tut (21600 saniye = 360 dakika)
+          sleep 21600
