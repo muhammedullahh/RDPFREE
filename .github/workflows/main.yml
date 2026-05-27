@@ -1,50 +1,58 @@
-name: RDP
+name: Ubuntu-RDP
 
 on:
   workflow_dispatch:
 
 jobs:
-  secure-rdp:
-    runs-on: windows-latest
+  ubuntu-rdp:
+    runs-on: ubuntu-latest
     timeout-minutes: 3600
 
     steps:
-      - name: Enable RDP
+      - name: Update System
         run: |
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "SecurityLayer" -Value 0 -Force
+          sudo apt update
 
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
-
-          Restart-Service TermService -Force
-
-      - name: Create RDP User
+      - name: Install Desktop + XRDP
         run: |
-          $password = "P@ssw0rd123!"
-          $secure = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name "RDP" -Password $secure -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
-          echo "RDP_PASS=$password" >> $env:GITHUB_ENV
+          sudo apt install -y xfce4 xfce4-goodies xrdp wget curl
 
-      - name: Install Tailscale 1.94.1
+          echo "xfce4-session" > ~/.xsession
+
+          sudo systemctl enable xrdp
+          sudo systemctl restart xrdp
+
+      - name: Create User
         run: |
-          Invoke-WebRequest https://pkgs.tailscale.com/stable/tailscale-setup-1.94.1-amd64.msi -OutFile tailscale.msi
-          Start-Process msiexec.exe -ArgumentList "/i tailscale.msi /quiet /norestart" -Wait
+          sudo useradd -m -s /bin/bash rdp
+          echo "rdp:P@ssw0rd123!" | sudo chpasswd
+          sudo usermod -aG sudo rdp
+
+      - name: Open RDP Port
+        run: |
+          sudo ufw allow 3389/tcp || true
+
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
 
       - name: Connect Tailscale
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }}
-          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-          echo "TS_IP=$ip" >> $env:GITHUB_ENV
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }}
+
+          IP=$(tailscale ip -4)
+          echo "TS_IP=$IP" >> $GITHUB_ENV
+
+      - name: Show Connection Info
+        run: |
+          echo "===================="
+          echo "IP: $TS_IP"
+          echo "User: rdp"
+          echo "Pass: P@ssw0rd123!"
+          echo "===================="
 
       - name: Keep Alive
         run: |
-          Write-Host "===================="
-          Write-Host "IP: $env:TS_IP"
-          Write-Host "User: RDP"
-          Write-Host "Pass: $env:RDP_PASS"
-          Write-Host "===================="
-          while ($true) { Start-Sleep 300 }
+          while true; do
+            sleep 300
+          done
