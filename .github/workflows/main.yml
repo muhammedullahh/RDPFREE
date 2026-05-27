@@ -8,12 +8,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3600
     steps:
-      - name: Update and Install RDP & Desktop
+      - name: Update and Install RDP & LXDE Desktop
         run: |
           sudo apt-get update
-          # Kurulum sırasında çıkan gizli klavye/bölge sorularını atlamak için noninteractive kullanıyoruz
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xorgxrdp xfce4 xfce4-goodies dbus-x11
+          # XFCE yerine çok daha hafif ve sorunsuz olan LXDE'yi kuruyoruz
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp lxde
           sudo systemctl enable xrdp
+          # XRDP kullanıcısını SSL sertifikaları grubuna ekliyoruz (Gizli çökmeleri engeller)
+          sudo adduser xrdp ssl-cert
 
       - name: Create RDP User and Configure Session
         run: |
@@ -21,16 +23,21 @@ jobs:
           echo "rdpuser:P@ssw0rd123!" | sudo chpasswd
           sudo usermod -aG sudo rdpuser
           
-          # CRASH ÇÖZÜMÜ: Ortam değişkenlerini (XDG) elle atayıp, masaüstünü DBUS ile paketleyip açıyoruz.
+          # LXDE masaüstünü başlatma komutunu ayarlıyoruz
+          echo "startlxde" | sudo tee /home/rdpuser/.xsession > /dev/null
+          sudo chown rdpuser:rdpuser /home/rdpuser/.xsession
+          sudo chmod +x /home/rdpuser/.xsession
+          
+          # startwm.sh dosyasını temiz bir şekilde LXDE için yeniden yazıyoruz
+          sudo cp /etc/xrdp/startwm.sh /etc/xrdp/startwm.sh.bak
           sudo bash -c 'cat > /etc/xrdp/startwm.sh <<EOF
           #!/bin/sh
-          export XDG_SESSION_TYPE=x11
-          export XDG_CURRENT_DESKTOP=XFCE
-          export XDG_CONFIG_DIRS=/etc/xdg:/etc
-          export XDG_DATA_DIRS=/usr/share/xfce4:/usr/share:/usr/local/share
-          
-          # D-Bus servisini çalıştırarak XFCE masaüstünü başlat
-          exec dbus-run-session -- xfce4-session
+          if [ -r /etc/default/locale ]; then
+            . /etc/default/locale
+            export LANG LANGUAGE
+          fi
+          # Sadece ve doğrudan LXDE masaüstünü çalıştırıyoruz
+          exec startlxde
           EOF'
           
           sudo chmod +x /etc/xrdp/startwm.sh
