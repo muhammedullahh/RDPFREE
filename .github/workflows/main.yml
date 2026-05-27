@@ -11,32 +11,36 @@ jobs:
     steps:
       - name: Update System
         run: |
-          sudo apt update
+          sudo apt update -y
 
       - name: Install XFCE + XRDP
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt install -y \
-          xfce4 \
-          xfce4-goodies \
-          xorg \
-          dbus-x11 \
-          x11-xserver-utils \
-          xrdp \
-          wget \
-          curl
+            xfce4 \
+            xfce4-goodies \
+            xorg \
+            dbus-x11 \
+            x11-xserver-utils \
+            xrdp \
+            wget \
+            curl \
+            sudo
 
           sudo adduser xrdp ssl-cert
 
-      - name: Create User
+      - name: Create RDP User
         run: |
-          sudo useradd -m -s /bin/bash rdp
+          sudo useradd -m -s /bin/bash rdp || true
           echo "rdp:P@ssw0rd123!" | sudo chpasswd
           sudo usermod -aG sudo rdp
 
-      - name: Configure XFCE
+      - name: Configure XFCE Session
         run: |
-          echo "startxfce4" > /home/rdp/.xsession
-          sudo chown rdp:rdp /home/rdp/.xsession
+          sudo mkdir -p /home/rdp
+
+          sudo bash -c 'echo "startxfce4" > /home/rdp/.xsession'
+
+          sudo chown -R rdp:rdp /home/rdp
 
           sudo sed -i 's/^test -x/#test -x/g' /etc/xrdp/startwm.sh
           sudo sed -i 's/^exec/#exec/g' /etc/xrdp/startwm.sh
@@ -61,17 +65,18 @@ jobs:
           sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }}
 
           IP=$(tailscale ip -4)
+
           echo "TS_IP=$IP" >> $GITHUB_ENV
 
       - name: Show Login Info
         run: |
-          echo "========================="
-          echo "IP: $TS_IP"
-          echo "USER: rdp"
-          echo "PASS: P@ssw0rd123!"
-          echo "========================="
+          echo "=========================="
+          echo "RDP IP: $TS_IP"
+          echo "USERNAME: rdp"
+          echo "PASSWORD: P@ssw0rd123!"
+          echo "=========================="
 
-      - name: Keep Alive
+      - name: Keep Runner Alive
         run: |
           while true; do
             sleep 300
