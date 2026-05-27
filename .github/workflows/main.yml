@@ -6,13 +6,15 @@ on:
 jobs:
   secure-rdp:
     runs-on: ubuntu-latest
-    timeout-minutes: 3600
+    timeout-minutes: 360 # GitHub Actions maksimum 6 saat (360 dk) izin verir.
     steps:
       - name: Update and Install RDP & Desktop
         run: |
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xorgxrdp xfce4 xfce4-goodies dbus-x11 x11-xserver-utils
-          
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            xrdp xorgxrdp xfce4 xfce4-goodies xfce4-session xfce4-settings xfconf \
+            dbus-x11 x11-xserver-utils
+            
           # X11 izinlerini yapılandır
           echo "allowed_users=anybody" | sudo tee /etc/X11/Xwrapper.config
           sudo adduser xrdp ssl-cert
@@ -27,10 +29,25 @@ jobs:
           echo "startxfce4" | sudo tee /home/rdpuser/.xsession
           sudo chown rdpuser:rdpuser /home/rdpuser/.xsession
           sudo chmod +x /home/rdpuser/.xsession
+          
+          # HATA ÇÖZÜMÜ 1: XDG ortam değişkenlerini düzelt (xfconfd failsafe hatası için)
+          cat <<EOF | sudo tee /home/rdpuser/.xsessionrc
+          export XDG_SESSION_TYPE=x11
+          export XDG_CURRENT_DESKTOP=XFCE
+          export XDG_CONFIG_DIRS=/etc/xdg:/etc
+          export XDG_DATA_DIRS=/usr/share/xfce4:/usr/local/share:/usr/share
+          export XDG_CACHE_HOME=/home/rdpuser/.cache
+          EOF
+          sudo chown rdpuser:rdpuser /home/rdpuser/.xsessionrc
+          
+          # HATA ÇÖZÜMÜ 2: Bozuk önbellek ve kilit dosyalarını temizle
+          sudo rm -rf /home/rdpuser/.config/xfce4/xfconf/xfce-perchannel-xml/*
+          sudo rm -f /home/rdpuser/.cache/sessions/xfce4-session-*
+          sudo chown -R rdpuser:rdpuser /home/rdpuser/.config /home/rdpuser/.cache
 
-      - name: Fix Polkit and Environment Issues (Siyah Ekran Çözümü)
+      - name: Fix Polkit and XRDP Startup Script
         run: |
-          # 1. Polkit Kuralları: Colord ve NetworkManager'ın şifre sormasını engelle (RDP'de kilitlenmeyi önler)
+          # HATA ÇÖZÜMÜ 3: Polkit kuralları (Arka planda şifre sorup kilitlenmeyi önler)
           sudo mkdir -p /etc/polkit-1/localauthority/50-local.d/
           cat <<EOF | sudo tee /etc/polkit-1/localauthority/50-local.d/45-allow-colord.pkla
           [Allow Colord all Users]
@@ -41,7 +58,7 @@ jobs:
           ResultActive=yes
           EOF
 
-          # 2. startwm.sh Dosyasını Düzelt (EN ÖNEMLİ ADIM)
+          # HATA ÇÖZÜMÜ 4: startwm.sh dosyasını sıfırla (Siyah ekran ve Dbus çözümü)
           cat <<EOF | sudo tee /etc/xrdp/startwm.sh
           #!/bin/sh
           if [ -r /etc/default/locale ]; then
@@ -49,12 +66,12 @@ jobs:
             export LANG LANGUAGE
           fi
           
-          # GitHub Runner'ın systemd/dbus değişkenlerini temizle (Siyah ekranı çözen sihirli komut)
+          # GitHub Runner'ın zehirli ortam değişkenlerini temizle
           unset DBUS_SESSION_BUS_ADDRESS
           unset XDG_RUNTIME_DIR
           
-          # XFCE'yi başlat
-          exec startxfce4
+          # Temiz bir DBus oturumu içinde XFCE'yi başlat (xfconfd için şart)
+          exec dbus-run-session -- startxfce4
           EOF
           sudo chmod +x /etc/xrdp/startwm.sh
 
@@ -80,6 +97,7 @@ jobs:
           echo "Kullanıcı  : rdpuser"
           echo "Şifre      : P@ssw0rd123!"
           echo "================================================================"
-          echo "ÖNEMLİ NOT: RDP istemcinizde Renk Derinliğini (Color Depth) 24-bit veya 16-bit yapın."
+          echo "NOT: RDP istemcinizde Renk Derinliğini (Color Depth) 24-bit veya 16-bit yapın."
           
+          # GitHub 6 saat sınırına kadar sistemi açık tut
           while true; do sleep 300; done
