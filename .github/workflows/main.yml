@@ -11,10 +11,8 @@ jobs:
       - name: Update and Install RDP & Desktop
         run: |
           sudo apt-get update
-          # D-Bus hatasını çözmek için dbus-x11 paketini de ekledik
           sudo apt-get install -y xrdp xfce4 xfce4-goodies dbus-x11
           sudo systemctl enable xrdp
-          sudo systemctl start xrdp
 
       - name: Create RDP User and Configure Session
         run: |
@@ -22,12 +20,28 @@ jobs:
           echo "rdpuser:P@ssw0rd123!" | sudo chpasswd
           sudo usermod -aG sudo rdpuser
           
-          # Masaüstü ayarını doğrudan rdpuser kullanıcısının ev dizinine yazıyoruz:
-          echo "startxfce4" | sudo tee /home/rdpuser/.xsession
+          # .xsession dosyasını oluştur ve yetkilendir
+          echo "xfce4-session" > /home/rdpuser/.xsession
           sudo chown rdpuser:rdpuser /home/rdpuser/.xsession
+          sudo chmod +x /home/rdpuser/.xsession
           
-          # XRDP'nin varsayılan başlatıcısını XFCE'ye zorluyoruz (Siyah ekranı önler)
-          sudo sed -i 's/. \/etc\/X11\/Xsession/startxfce4/g' /etc/xrdp/startwm.sh
+          # CRASH ÇÖZÜMÜ: startwm.sh dosyasını ezip sıfırdan yazıyoruz
+          sudo cp /etc/xrdp/startwm.sh /etc/xrdp/startwm.sh.bak
+          sudo bash -c 'cat > /etc/xrdp/startwm.sh <<EOF
+          #!/bin/sh
+          if [ -r /etc/default/locale ]; then
+            . /etc/default/locale
+            export LANG LANGUAGE
+          fi
+          # Crash verdiren değişkenleri iptal ediyoruz
+          unset DBUS_SESSION_BUS_ADDRESS
+          unset XDG_RUNTIME_DIR
+          # Sadece XFCE masaüstünü başlatıyoruz
+          exec startxfce4
+          EOF'
+          
+          sudo chmod +x /etc/xrdp/startwm.sh
+          sudo systemctl restart xrdp
 
       - name: Install Tailscale
         run: |
