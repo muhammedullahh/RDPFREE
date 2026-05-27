@@ -1,60 +1,23 @@
-name: Ubuntu-RDP
-
-on:
-  workflow_dispatch:
+on: workflow_dispatch:
 
 jobs:
-  ubuntu-rdp:
+  secure-rdp:
     runs-on: ubuntu-latest
     timeout-minutes: 3600
-
     steps:
-      - name: Update System
+      - name: Update and Install RDP
         run: |
-          sudo apt update -y
-
-      - name: Install XFCE + XRDP
-        run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt install -y \
-            xfce4 \
-            xfce4-goodies \
-            xorg \
-            dbus-x11 \
-            x11-xserver-utils \
-            xrdp \
-            wget \
-            curl \
-            sudo
-
-          sudo adduser xrdp ssl-cert
+          sudo apt-get update
+          sudo apt-get install -y xrdp xfce4 xfce4-goodies
+          sudo systemctl enable xrdp
+          echo xfce4-session > ~/.xsession
+          sudo systemctl restart xrdp
 
       - name: Create RDP User
         run: |
-          sudo useradd -m -s /bin/bash rdp || true
-          echo "rdp:P@ssw0rd123!" | sudo chpasswd
-          sudo usermod -aG sudo rdp
-
-      - name: Configure XFCE Session
-        run: |
-          sudo mkdir -p /home/rdp
-
-          sudo bash -c 'echo "startxfce4" > /home/rdp/.xsession'
-
-          sudo chown -R rdp:rdp /home/rdp
-
-          sudo sed -i 's/^test -x/#test -x/g' /etc/xrdp/startwm.sh
-          sudo sed -i 's/^exec/#exec/g' /etc/xrdp/startwm.sh
-
-          echo "startxfce4" | sudo tee -a /etc/xrdp/startwm.sh
-
-      - name: Enable XRDP
-        run: |
-          sudo systemctl enable xrdp
-          sudo systemctl restart xrdp
-
-      - name: Open Firewall
-        run: |
-          sudo ufw allow 3389/tcp || true
+          sudo useradd -m -s /bin/bash rdpuser
+          echo "rdpuser:P@ssw0rd123!" | sudo chpasswd
+          sudo usermod -aG sudo rdpuser
 
       - name: Install Tailscale
         run: |
@@ -63,21 +26,14 @@ jobs:
       - name: Connect Tailscale
         run: |
           sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }}
+          TS_IP=$(tailscale ip -4)
+          echo "TS_IP=$TS_IP" >> $GITHUB_ENV
 
-          IP=$(tailscale ip -4)
-
-          echo "TS_IP=$IP" >> $GITHUB_ENV
-
-      - name: Show Login Info
+      - name: Keep Alive
         run: |
-          echo "=========================="
-          echo "RDP IP: $TS_IP"
-          echo "USERNAME: rdp"
-          echo "PASSWORD: P@ssw0rd123!"
-          echo "=========================="
-
-      - name: Keep Runner Alive
-        run: |
-          while true; do
-            sleep 300
-          done
+          echo "===================="
+          echo "IP: $TS_IP"
+          echo "User: rdpuser"
+          echo "Pass: P@ssw0rd123!"
+          echo "===================="
+          while true; do sleep 300; done
