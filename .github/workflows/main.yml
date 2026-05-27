@@ -8,56 +8,78 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3600
     steps:
-      - name: Update and Install RDP & LXDE Desktop
+      - name: Update and Install RDP & Desktop
         run: |
           sudo apt-get update
-          # XFCE yerine çok daha hafif ve sorunsuz olan LXDE'yi kuruyoruz
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp lxde
-          sudo systemctl enable xrdp
-          # XRDP kullanıcısını SSL sertifikaları grubuna ekliyoruz (Gizli çökmeleri engeller)
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp xorgxrdp xfce4 xfce4-goodies dbus-x11 x11-xserver-utils
+          
+          # X11 izinlerini yapılandır
+          echo "allowed_users=anybody" | sudo tee /etc/X11/Xwrapper.config
           sudo adduser xrdp ssl-cert
 
       - name: Create RDP User and Configure Session
         run: |
           sudo useradd -m -s /bin/bash rdpuser
           echo "rdpuser:P@ssw0rd123!" | sudo chpasswd
-          sudo usermod -aG sudo rdpuser
+          sudo usermod -aG sudo,video,render,users rdpuser
           
-          # LXDE masaüstünü başlatma komutunu ayarlıyoruz
-          echo "startlxde" | sudo tee /home/rdpuser/.xsession > /dev/null
+          # Kullanıcı oturumunu XFCE olarak ayarla
+          echo "startxfce4" | sudo tee /home/rdpuser/.xsession
           sudo chown rdpuser:rdpuser /home/rdpuser/.xsession
           sudo chmod +x /home/rdpuser/.xsession
-          
-          # startwm.sh dosyasını temiz bir şekilde LXDE için yeniden yazıyoruz
-          sudo cp /etc/xrdp/startwm.sh /etc/xrdp/startwm.sh.bak
-          sudo bash -c 'cat > /etc/xrdp/startwm.sh <<EOF
+
+      - name: Fix Polkit and Environment Issues (Siyah Ekran Çözümü)
+        run: |
+          # 1. Polkit Kuralları: Colord ve NetworkManager'ın şifre sormasını engelle (RDP'de kilitlenmeyi önler)
+          sudo mkdir -p /etc/polkit-1/localauthority/50-local.d/
+          cat <<EOF | sudo tee /etc/polkit-1/localauthority/50-local.d/45-allow-colord.pkla
+          [Allow Colord all Users]
+          Identity=unix-user:*
+          Action=org.freedesktop.color-manager.create-device;org.freedesktop.color-manager.create-profile;org.freedesktop.color-manager.delete-device;org.freedesktop.color-manager.delete-profile;org.freedesktop.color-manager.modify-device;org.freedesktop.color-manager.modify-profile
+          ResultAny=no
+          ResultInactive=no
+          ResultActive=yes
+          EOF
+
+          # 2. startwm.sh Dosyasını Düzelt (EN ÖNEMLİ ADIM)
+          cat <<EOF | sudo tee /etc/xrdp/startwm.sh
           #!/bin/sh
           if [ -r /etc/default/locale ]; then
             . /etc/default/locale
             export LANG LANGUAGE
           fi
-          # Sadece ve doğrudan LXDE masaüstünü çalıştırıyoruz
-          exec startlxde
-          EOF'
           
+          # GitHub Runner'ın systemd/dbus değişkenlerini temizle (Siyah ekranı çözen sihirli komut)
+          unset DBUS_SESSION_BUS_ADDRESS
+          unset XDG_RUNTIME_DIR
+          
+          # XFCE'yi başlat
+          exec startxfce4
+          EOF
           sudo chmod +x /etc/xrdp/startwm.sh
-          sudo systemctl restart xrdp
 
-      - name: Install Tailscale
+      - name: Start XRDP Services
+        run: |
+          sudo systemctl enable xrdp xrdp-sesman
+          sudo systemctl restart xrdp xrdp-sesman
+          sleep 5
+          sudo systemctl status xrdp --no-pager
+
+      - name: Install and Connect Tailscale
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
-
-      - name: Connect Tailscale
-        run: |
           sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }}
           TS_IP=$(tailscale ip -4)
           echo "TS_IP=$TS_IP" >> $GITHUB_ENV
 
-      - name: Keep Alive
+      - name: Keep Alive & Connection Info
         run: |
-          echo "===================="
-          echo "IP: $TS_IP"
-          echo "User: rdpuser"
-          echo "Pass: P@ssw0rd123!"
-          echo "===================="
+          echo "==================== RDP BAĞLANTI BİLGİLERİ ===================="
+          echo "IP Adresi  : $TS_IP"
+          echo "Port       : 3389"
+          echo "Kullanıcı  : rdpuser"
+          echo "Şifre      : P@ssw0rd123!"
+          echo "================================================================"
+          echo "ÖNEMLİ NOT: RDP istemcinizde Renk Derinliğini (Color Depth) 24-bit veya 16-bit yapın."
+          
           while true; do sleep 300; done
