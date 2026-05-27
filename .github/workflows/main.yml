@@ -1,4 +1,7 @@
-on: workflow_dispatch:
+name: Secure RDP Workflow
+
+on:
+  workflow_dispatch:
 
 jobs:
   secure-rdp:
